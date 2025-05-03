@@ -5,10 +5,12 @@ Esse repositório é inicialmente um script para fazer o download de todos os co
 
 ## Rodar
 
+### Instalar dependências
 ```shell
 npm i
 ```
 
+### Rodar projeto
 ```shell
 node index.js
 ```
