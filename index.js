@@ -34,22 +34,24 @@ async function processarCSV(caminhoCSV, CNPJ) {
     .createReadStream(caminhoCSV)
     .pipe(parse({ delimiter: ';', columns: true }));
 
-  for await (const row of parser) {
-    if (row['CNPJ_CIA'] === CNPJ) {
-      comunicados.push({
-        empresa: row['DENOM_CIA'],
-        tipo: row['CATEG_DOC'],
-        data: row['DT_REFER'],
-        descricao: row['DESC_ASSUNTO'],
-        link: row['LINK_DOC']
-      });
+  try {
+    for await (const row of parser) {
+      if (row['CNPJ_CIA'] === CNPJ) {
+        comunicados.push({
+          empresa: row['DENOM_CIA'],
+          tipo: row['CATEG_DOC'],
+          data: row['DT_REFER'],
+          descricao: row['DESC_ASSUNTO'],
+          link: row['LINK_DOC']
+        });
+      }
     }
-  }
+  } catch (err) { }
 
   return comunicados;
 }
 
-async function baixarEExtrairComunicadoZIP(link, nomeEmpresa, destRootFolder) {
+async function baixarEExtrairComunicadoZIP(link, nomeEmpresa, destRootFolder, ano) {
   const response = await fetch(link);
   if (!response.ok) {
     console.error(`Erro ao baixar comunicado: ${response.statusText}`);
@@ -66,7 +68,7 @@ async function baixarEExtrairComunicadoZIP(link, nomeEmpresa, destRootFolder) {
 
   for (const entry of entries) {
     if (!entry.isDirectory && entry.entryName.toLowerCase().endsWith('.pdf')) {
-      const nomeOriginal = path.basename(entry.entryName);
+      const nomeOriginal = path.basename(entry.entryName.replaceAll('.pdf', `_${ano}.pdf`));
       const caminhoFinal = path.join(empresaPath, nomeOriginal);
 
       const caminhoSeguro = fs.existsSync(caminhoFinal)
@@ -79,7 +81,7 @@ async function baixarEExtrairComunicadoZIP(link, nomeEmpresa, destRootFolder) {
   }
 
   if (pdfsExtraidos > 0) {
-    console.log(`📄 ${pdfsExtraidos} PDF(s) salvos em ${empresaPath}`);
+    console.log(`📄 ${ano}: ${pdfsExtraidos} PDF(s) ${link}`);
   } else {
     console.warn(`⚠️ Nenhum PDF encontrado no ZIP: ${link}`);
   }
@@ -91,39 +93,44 @@ async function baixarComunicadosPorAno(CNPJ, ano) {
   const pastaDados = path.resolve('./dados');
   const pastaComunicados = path.resolve('./comunicados');
 
+  const todosOsComunicados = []
+
   criarDiretorioSeNaoExiste(pastaDados);
   criarDiretorioSeNaoExiste(pastaComunicados);
 
   const pathExtraido = await baixarEExtrairZipDFP(zipUrl, pastaDados);
   const arquivosCSV = fs.readdirSync(pathExtraido).filter(f => f.endsWith('.csv'));
 
-  for (const arquivo of arquivosCSV) {
+  await Promise.all(arquivosCSV.map(async arquivo => {
     const caminhoCSV = path.join(pathExtraido, arquivo);
     const comunicados = await processarCSV(caminhoCSV, CNPJ);
 
-    if (comunicados.length === 0) {
-      console.log(`Nenhum comunicado para ${CNPJ} em ${ano}.`);
-    } else {
-      console.log(`📬 ${comunicados.length} comunicado(s) encontrados para ${ano}:`);
-
-      for (const comunicado of comunicados) {
+    if (comunicados?.length > 0) {
+      comunicados.map(comunicado => {
         const nomeEmpresa = comunicado.empresa.replace(/[^\w]/g, '_');
-        await baixarEExtrairComunicadoZIP(comunicado.link, nomeEmpresa, pastaComunicados);
-      }
+        todosOsComunicados.push({ link: comunicado.link, nomeEmpresa, pastaComunicados, ano })
+      })
     }
-  }
+  }))
+
+  console.log(`📬 ${todosOsComunicados.length} comunicado(s) encontrados para ${ano}:`);
+  console.log(`📄 Baixando comunicados...\n`)
+
+  await Promise.all(
+    todosOsComunicados.map(
+      async ({ link, nomeEmpresa, pastaComunicados, ano }) => await baixarEExtrairComunicadoZIP(link, nomeEmpresa, pastaComunicados, ano)
+    )
+  )
 }
 
-const CNPJ = '00.000.000/0001-91';
-const anos = ['2020', '2021', '2022', '2023', '2024'];
+const CNPJ = '33.592.510/0001-54';
+const anos = ['2013', '2014', '2015', '2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024'];
 
 (async () => {
   for (const ano of anos) {
     try {
       console.log(`\n📅 Processando ano ${ano}...`);
       await baixarComunicadosPorAno(CNPJ, ano);
-    } catch (err) {
-      console.error(`❌ Erro no ano ${ano}: ${err.message}`);
-    }
+    } catch (err) { }
   }
 })();
